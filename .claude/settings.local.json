@@ -5,7 +5,9 @@
       "Bash(mkdir:*)",
       "Bash(go mod:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(go env:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
