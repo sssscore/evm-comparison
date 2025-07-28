@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/0xsoniclabs/tosca/go/interpreter/lfvm"
@@ -35,6 +36,55 @@ func BenchmarkSimpleOperations(b *testing.B) {
 	})
 }
 
+// Optimized LFVM benchmarks with super-instructions enabled
+func BenchmarkOptimizedLFVM(b *testing.B) {
+	// Register experimental configurations to enable super-instructions
+	err := lfvm.RegisterExperimentalInterpreterConfigurations()
+	if err != nil {
+		b.Fatalf("Failed to register experimental configurations: %v", err)
+	}
+	
+	// Create interpreter with super-instructions enabled using the experimental registry
+	interpreter, err := tosca.NewInterpreter("lfvm-si", nil)
+	if err != nil {
+		b.Fatalf("Failed to create optimized LFVM interpreter with super-instructions: %v", err)
+	}
+
+	b.Run("SimpleArithmetic", func(b *testing.B) {
+		code, _ := hex.DecodeString(simpleArithmeticCode)
+		for i := 0; i < b.N; i++ {
+			params := tosca.Parameters{
+				Gas:  10000,
+				Code: code,
+			}
+			_, _ = interpreter.Run(params)
+		}
+	})
+
+	// Test super-instruction patterns specifically
+	superInstructionPatterns := map[string]string{
+		"SWAP1_POP_Pattern":    "6001600280915060036004809150600560068091506000", // Multiple SWAP1_POP patterns
+		"PUSH1_ADD_Pattern":    "6001600101600201600301600401600501600601600701600801600901600a01600b01600c01600d01600e01600f016000", // Multiple PUSH1_ADD patterns  
+		"PUSH1_SHL_Pattern":    "6001601b6002601b6003601b6004601b6005601b6000", // Multiple PUSH1_SHL patterns
+		"DUP1_POP_Pattern":     "60018050600280506003805060048050600580506000", // Multiple DUP1_POP patterns
+		"SWAP2_POP_Pattern":    "6001600260039250600460059250600660079250600860099250600a600b9250600c600d92506000", // Multiple SWAP2_POP patterns
+		"ComplexSuperInstr":    "6001600280915060036004825091506005600682918250600780689250600960008091506000", // Mixed super-instruction patterns
+	}
+
+	for name, hexCode := range superInstructionPatterns {
+		b.Run(name, func(b *testing.B) {
+			code, _ := hex.DecodeString(hexCode)
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:  50000,
+					Code: code,
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
 // Benchmark bytecode conversion performance
 func BenchmarkBEP20BytecodeConversion(b *testing.B) {
 	bytecode, err := hex.DecodeString(bep20ContractBytecode)
@@ -42,7 +92,9 @@ func BenchmarkBEP20BytecodeConversion(b *testing.B) {
 		b.Fatalf("Failed to decode bytecode: %v", err)
 	}
 
-	converter, err := lfvm.NewConverter(lfvm.ConversionConfig{})
+	converter, err := lfvm.NewConverter(lfvm.ConversionConfig{
+		WithSuperInstructions: true,
+	})
 	if err != nil {
 		b.Fatalf("Failed to create converter: %v", err)
 	}
@@ -88,4 +140,527 @@ func BenchmarkBasicEVMOperations(b *testing.B) {
 			}
 		})
 	}
+}
+
+// Extensive opcode coverage benchmarks for Tosca LFVM
+func BenchmarkExtensiveOpcodesCoverage(b *testing.B) {
+	interpreter, err := lfvm.NewInterpreter(lfvm.Config{})
+	if err != nil {
+		b.Fatalf("Failed to create LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		// Arithmetic Operations
+		"ArithmeticIntensive": "600360026004600501600201600302600403600504600605600706600807600908600a09600b0a600c0b50505050505050506000", // Multiple arithmetic ops
+		"ModularArithmetic":   "600a600b600c0960080a600d600e0b6000",                                                                       // ADDMOD, MULMOD, MOD
+		"BitwiseOperations":   "600f601016601117601218601319601a1a601b1b6000",                                                             // AND, OR, XOR, NOT, BYTE
+
+		// Comparison Operations
+		"ComparisonOps": "60056006106007600810600960081260056003136000", // LT, GT, SLT, SGT, EQ, ISZERO
+
+		// Stack Operations - More Complex
+		"DeepStackOps":    "6001600260036004600560066007600880818283848586878889808100",   // Multiple DUPs and SWAPs
+		"StackManipHeavy": "600160028060038160048260058360068460078590919293949596979899", // Heavy stack manipulation
+		"StackBoundaries": "6001808080808080808080808080808080505050505050505050506000",   // Push to near-limit, then pop
+
+		// Memory Operations
+		"MemoryIntensive":   "60206000526040600052606060005260806000526000516020516040516060516000",                                                                                                                                                                                                                                               // Multiple MSTORE/MLOAD
+		"MemoryExpansion":   "60ff60ff5260ff6101005260ff6102005260ff6103005260ff6104005260ff6105005260ff6106005260ff6107005260ff6108005260ff6109005260ff610a005260ff610b005260ff610c005260ff610d005260ff610e005260ff610f0052610f005160e005160d005160c005160b005160a00516090051608005160700516060051605005160400516030051602005160100516000516000", // Memory expansion
+		"MemoryCopyPattern": "60206000526040602052606060405260806060526000602060006020600037602060406020604037604060806040606037608060a060806080376000",                                                                                                                                                                                           // CODECOPY/CALLDATACOPY patterns
+
+		// Hashing Operations
+		"HashingIntensive": "6020600052602060006020600020602060005260206000602060002060206000526020600060206000206000", // Multiple SHA3 calls
+		"HashWithMemory":   "6001600052600260205260036040526004606052600560805260a0600060a0206000",                     // SHA3 with memory expansion
+
+		// Jump Operations
+		"JumpPattern":      "600a565b6001600101600c565b6002600201600e565b6003600301005b6004600401565b6000",                                                                                                                                       // Multiple jumps/labels
+		"ConditionalJumps": "600160001415601857600260021415602257600360031415602c5760006033565b60aa6000526020600060206000206035565b60bb6000526020600060206000206035565b60cc6000526020600060206000206035565b60dd600052602060006020600020005b6000", // Complex conditional jumps
+
+		// Gas Operations
+		"GasOpsPattern": "5a60015a0360025a0360035a0360045a0360055a036000", // GAS opcode with arithmetic
+
+		// Environment/Context Operations
+		"EnvironmentOps": "3034333235363a40414243444546476000", // ADDRESS, ORIGIN, CALLER, CALLVALUE, etc.
+		"BlockOps":       "42434041444548496000",               // TIMESTAMP, NUMBER, GASLIMIT, etc.
+
+		// Complex Mixed Operations
+		"MixedComplex": "600360020160040260050360060460070560080660090760100860008060018160028260038360048460058560068660078760088860098960108a60118b60128c60138d60148e60158f60109060119160129260139360149460159560169660179760189860199960209a60219b60229c60239d60249e60259f9050505050505050505050505050505050505050505050506000",
+
+		// Performance Edge Cases
+		"LargeStackDepth":  buildLargeStackCode(50),     // 50 items on stack
+		"MemoryBoundary":   buildMemoryBoundaryCode(),   // Memory at boundary conditions
+		"JumpTableStress":  buildJumpTableStress(),      // Stress jump table
+		"SuperInstruction": buildSuperInstructionTest(), // Operations that might be super-instructions
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, err := hex.DecodeString(hexCode)
+			if err != nil {
+				b.Fatalf("Failed to decode %s: %v", name, err)
+			}
+
+			// Increase gas limit for complex operations
+			gasLimit := tosca.Gas(100_000)
+			if name == "MemoryExpansion" || name == "LargeStackDepth" {
+				gasLimit = tosca.Gas(1_000_000)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:  gasLimit,
+					Code: code,
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Extensive opcode coverage benchmarks for Tosca LFVM (WITH CACHING)
+func BenchmarkExtensiveOpcodeCoverageWithCaching(b *testing.B) {
+	interpreter, err := lfvm.NewInterpreter(lfvm.Config{})
+	if err != nil {
+		b.Fatalf("Failed to create LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		// Arithmetic Operations
+		"ArithmeticIntensive": "600360026004600501600201600302600403600504600605600706600807600908600a09600b0a600c0b50505050505050506000", // Multiple arithmetic ops
+		"ModularArithmetic":   "600a600b600c0960080a600d600e0b6000",                                                                       // ADDMOD, MULMOD, MOD
+		"BitwiseOperations":   "600f601016601117601218601319601a1a601b1b6000",                                                             // AND, OR, XOR, NOT, BYTE
+
+		// Comparison Operations
+		"ComparisonOps": "60056006106007600810600960081260056003136000", // LT, GT, SLT, SGT, EQ, ISZERO
+
+		// Stack Operations - More Complex
+		"DeepStackOps":    "6001600260036004600560066007600880818283848586878889808100",   // Multiple DUPs and SWAPs
+		"StackManipHeavy": "600160028060038160048260058360068460078590919293949596979899", // Heavy stack manipulation
+		"StackBoundaries": "6001808080808080808080808080808080505050505050505050506000",   // Push to near-limit, then pop
+
+		// Memory Operations
+		"MemoryIntensive":   "60206000526040600052606060005260806000526000516020516040516060516000",                                                                                                                                                                                                                                               // Multiple MSTORE/MLOAD
+		"MemoryExpansion":   "60ff60ff5260ff6101005260ff6102005260ff6103005260ff6104005260ff6105005260ff6106005260ff6107005260ff6108005260ff6109005260ff610a005260ff610b005260ff610c005260ff610d005260ff610e005260ff610f0052610f005160e005160d005160c005160b005160a00516090051608005160700516060051605005160400516030051602005160100516000516000", // Memory expansion
+		"MemoryCopyPattern": "60206000526040602052606060405260806060526000602060006020600037602060406020604037604060806040606037608060a060806080376000",                                                                                                                                                                                           // CODECOPY/CALLDATACOPY patterns
+
+		// Hashing Operations
+		"HashingIntensive": "6020600052602060006020600020602060005260206000602060002060206000526020600060206000206000", // Multiple SHA3 calls
+		"HashWithMemory":   "6001600052600260205260036040526004606052600560805260a0600060a0206000",                     // SHA3 with memory expansion
+
+		// Jump Operations
+		"JumpPattern":      "600a565b6001600101600c565b6002600201600e565b6003600301005b6004600401565b6000",                                                                                                                                       // Multiple jumps/labels
+		"ConditionalJumps": "600160001415601857600260021415602257600360031415602c5760006033565b60aa6000526020600060206000206035565b60bb6000526020600060206000206035565b60cc6000526020600060206000206035565b60dd600052602060006020600020005b6000", // Complex conditional jumps
+
+		// Gas Operations
+		"GasOpsPattern": "5a60015a0360025a0360035a0360045a0360055a036000", // GAS opcode with arithmetic
+
+		// Environment/Context Operations
+		"EnvironmentOps": "3034333235363a40414243444546476000", // ADDRESS, ORIGIN, CALLER, CALLVALUE, etc.
+		"BlockOps":       "42434041444548496000",               // TIMESTAMP, NUMBER, GASLIMIT, etc.
+
+		// Complex Mixed Operations
+		"MixedComplex": "600360020160040260050360060460070560080660090760100860008060018160028260038360048460058560068660078760088860098960108a60118b60128c60138d60148e60158f60109060119160129260139360149460159560169660179760189860199960209a60219b60229c60239d60249e60259f9050505050505050505050505050505050505050505050506000",
+
+		// Performance Edge Cases
+		"LargeStackDepth":  buildLargeStackCode(50),     // 50 items on stack
+		"MemoryBoundary":   buildMemoryBoundaryCode(),   // Memory at boundary conditions
+		"JumpTableStress":  buildJumpTableStress(),      // Stress jump table
+		"SuperInstruction": buildSuperInstructionTest(), // Operations that might be super-instructions
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, err := hex.DecodeString(hexCode)
+			if err != nil {
+				b.Fatalf("Failed to decode %s: %v", name, err)
+			}
+
+			// Create a fixed code hash to enable caching
+			hashBytes := []byte("extensive_cache_" + name)
+			codeHash := &tosca.Hash{}
+			// Pad to 32 bytes if needed
+			if len(hashBytes) < 32 {
+				paddedBytes := make([]byte, 32)
+				copy(paddedBytes, hashBytes)
+				copy(codeHash[:], paddedBytes)
+			} else {
+				copy(codeHash[:], hashBytes[:32])
+			}
+
+			// Increase gas limit for complex operations
+			gasLimit := tosca.Gas(100_000)
+			if name == "MemoryExpansion" || name == "LargeStackDepth" {
+				gasLimit = tosca.Gas(1_000_000)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      gasLimit,
+					Code:     code,
+					CodeHash: codeHash, // Enable caching
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Extensive opcode coverage benchmarks for Tosca LFVM (OPTIMIZED WITH CACHING)
+func BenchmarkExtensiveOpcodeCoverageOptimizedWithCaching(b *testing.B) {
+	// Register experimental configurations
+	err := lfvm.RegisterExperimentalInterpreterConfigurations()
+	if err != nil {
+		b.Fatalf("Failed to register experimental configurations: %v", err)
+	}
+	
+	// Create interpreter with super-instructions enabled
+	interpreter, err := tosca.NewInterpreter("lfvm-si", nil)
+	if err != nil {
+		b.Fatalf("Failed to create optimized LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		// Arithmetic Operations
+		"ArithmeticIntensive": "600360026004600501600201600302600403600504600605600706600807600908600a09600b0a600c0b50505050505050506000", // Multiple arithmetic ops
+		"ModularArithmetic":   "600a600b600c0960080a600d600e0b6000",                                                                       // ADDMOD, MULMOD, MOD
+		"BitwiseOperations":   "600f601016601117601218601319601a1a601b1b6000",                                                             // AND, OR, XOR, NOT, BYTE
+
+		// Comparison Operations
+		"ComparisonOps": "60056006106007600810600960081260056003136000", // LT, GT, SLT, SGT, EQ, ISZERO
+
+		// Stack Operations - More Complex
+		"DeepStackOps":    "6001600260036004600560066007600880818283848586878889808100",   // Multiple DUPs and SWAPs
+		"StackManipHeavy": "600160028060038160048260058360068460078590919293949596979899", // Heavy stack manipulation
+		"StackBoundaries": "6001808080808080808080808080808080505050505050505050506000",   // Push to near-limit, then pop
+
+		// Memory Operations
+		"MemoryIntensive":   "60206000526040600052606060005260806000526000516020516040516060516000",                                                                                                                                                                                                                                               // Multiple MSTORE/MLOAD
+		"MemoryExpansion":   "60ff60ff5260ff6101005260ff6102005260ff6103005260ff6104005260ff6105005260ff6106005260ff6107005260ff6108005260ff6109005260ff610a005260ff610b005260ff610c005260ff610d005260ff610e005260ff610f0052610f005160e005160d005160c005160b005160a00516090051608005160700516060051605005160400516030051602005160100516000516000", // Memory expansion
+		"MemoryCopyPattern": "60206000526040602052606060405260806060526000602060006020600037602060406020604037604060806040606037608060a060806080376000",                                                                                                                                                                                           // CODECOPY/CALLDATACOPY patterns
+
+		// Hashing Operations
+		"HashingIntensive": "6020600052602060006020600020602060005260206000602060002060206000526020600060206000206000", // Multiple SHA3 calls
+		"HashWithMemory":   "6001600052600260205260036040526004606052600560805260a0600060a0206000",                     // SHA3 with memory expansion
+
+		// Jump Operations
+		"JumpPattern":      "600a565b6001600101600c565b6002600201600e565b6003600301005b6004600401565b6000",                                                                                                                                       // Multiple jumps/labels
+		"ConditionalJumps": "600160001415601857600260021415602257600360031415602c5760006033565b60aa6000526020600060206000206035565b60bb6000526020600060206000206035565b60cc6000526020600060206000206035565b60dd600052602060006020600020005b6000", // Complex conditional jumps
+
+		// Gas Operations
+		"GasOpsPattern": "5a60015a0360025a0360035a0360045a0360055a036000", // GAS opcode with arithmetic
+
+		// Environment/Context Operations
+		"EnvironmentOps": "3034333235363a40414243444546476000", // ADDRESS, ORIGIN, CALLER, CALLVALUE, etc.
+		"BlockOps":       "42434041444548496000",               // TIMESTAMP, NUMBER, GASLIMIT, etc.
+
+		// Complex Mixed Operations
+		"MixedComplex": "600360020160040260050360060460070560080660090760100860008060018160028260038360048460058560068660078760088860098960108a60118b60128c60138d60148e60158f60109060119160129260139360149460159560169660179760189860199960209a60219b60229c60239d60249e60259f9050505050505050505050505050505050505050505050506000",
+
+		// Performance Edge Cases
+		"LargeStackDepth":  buildLargeStackCode(50),     // 50 items on stack
+		"MemoryBoundary":   buildMemoryBoundaryCode(),   // Memory at boundary conditions
+		"JumpTableStress":  buildJumpTableStress(),      // Stress jump table
+		"SuperInstruction": buildSuperInstructionTest(), // Operations that might be super-instructions
+		
+		// Super-instruction patterns that should benefit most
+		"SWAP1_POP_Pattern": "6001600280915060036004809150600560068091506000", // Multiple SWAP1_POP patterns
+		"PUSH1_ADD_Pattern": "6001600101600201600301600401600501600601600701600801600901600a01600b01600c01600d01600e01600f016000", // Multiple PUSH1_ADD patterns
+		"PUSH1_SHL_Pattern": "6001601b6002601b6003601b6004601b6005601b6000", // Multiple PUSH1_SHL patterns
+		"DUP1_POP_Pattern":  "60018050600280506003805060048050600580506000", // Multiple DUP1_POP patterns
+		"SWAP2_POP_Pattern": "6001600260039250600460059250600660079250600860099250600a600b9250600c600d92506000", // Multiple SWAP2_POP patterns
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, err := hex.DecodeString(hexCode)
+			if err != nil {
+				b.Fatalf("Failed to decode %s: %v", name, err)
+			}
+
+			// Create a fixed code hash to enable caching
+			hashBytes := []byte("opt_extensive_" + name)
+			codeHash := &tosca.Hash{}
+			// Pad to 32 bytes if needed
+			if len(hashBytes) < 32 {
+				paddedBytes := make([]byte, 32)
+				copy(paddedBytes, hashBytes)
+				copy(codeHash[:], paddedBytes)
+			} else {
+				copy(codeHash[:], hashBytes[:32])
+			}
+
+			// Increase gas limit for complex operations
+			gasLimit := tosca.Gas(100_000)
+			if name == "MemoryExpansion" || name == "LargeStackDepth" {
+				gasLimit = tosca.Gas(1_000_000)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      gasLimit,
+					Code:     code,
+					CodeHash: codeHash, // Enable caching
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Helper functions to build complex test patterns (same as BSC benchmarks)
+func buildLargeStackCode(depth int) string {
+	// Push numbers 1 to depth, then pop them all
+	code := ""
+	for i := 1; i <= depth; i++ {
+		if i <= 255 {
+			code += fmt.Sprintf("60%02x", i) // PUSH1 i
+		} else {
+			code += fmt.Sprintf("61%04x", i) // PUSH2 i
+		}
+	}
+	// Pop all items
+	for i := 0; i < depth; i++ {
+		code += "50" // POP
+	}
+	code += "6000" // PUSH1 0 (to avoid empty stack)
+	return code
+}
+
+// Benchmark repeated contract calls to test caching benefits
+func BenchmarkRepeatedContractCalls(b *testing.B) {
+	interpreter, err := lfvm.NewInterpreter(lfvm.Config{})
+	if err != nil {
+		b.Fatalf("Failed to create LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		"SimpleArithmetic":     simpleArithmeticCode,
+		"ArithmeticIntensive":  "60036002016004600260020160056003600401600660046002016007600560030160086006600401505050505050506000",
+		"BitwiseOperations":    "600f601016601117601218601319601a1a601b1b6000",
+		"ComparisonOps":        "60056006106007600810600960081260056003136000",
+		"MemoryIntensive":      "60206000526040600052606060005260806000526000516020516040516060516000",
+		"PUSH_POP":            "60016000506000",
+		"ADD_SUB":             "60016002016001036000",
+		"MUL_DIV":             "60036002026003046000",
+		"DUP_SWAP":            "600180908100",
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, _ := hex.DecodeString(hexCode)
+			
+			// Create a fixed code hash to enable caching
+			codeHash := &tosca.Hash{}
+			copy(codeHash[:], []byte("test_contract_hash_"+name)[:32])
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      50000,
+					Code:     code,
+					CodeHash: codeHash, // Provide hash to enable caching
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Benchmark repeated calls with optimized LFVM (super-instructions + caching)
+func BenchmarkOptimizedRepeatedCalls(b *testing.B) {
+	// Register experimental configurations
+	err := lfvm.RegisterExperimentalInterpreterConfigurations()
+	if err != nil {
+		b.Fatalf("Failed to register experimental configurations: %v", err)
+	}
+	
+	// Create interpreter with super-instructions enabled
+	interpreter, err := tosca.NewInterpreter("lfvm-si", nil)
+	if err != nil {
+		b.Fatalf("Failed to create optimized LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		"SimpleArithmetic":     simpleArithmeticCode,
+		"ArithmeticIntensive":  "60036002016004600260020160056003600401600660046002016007600560030160086006600401505050505050506000",
+		"BitwiseOperations":    "600f601016601117601218601319601a1a601b1b6000",
+		"ComparisonOps":        "60056006106007600810600960081260056003136000",
+		"MemoryIntensive":      "60206000526040600052606060005260806000526000516020516040516060516000",
+		"PUSH_POP":            "60016000506000",
+		"ADD_SUB":             "60016002016001036000", 
+		"MUL_DIV":             "60036002026003046000",
+		"DUP_SWAP":            "600180908100",
+		"SWAP1_POP_Pattern":   "6001600280915060036004809150600560068091506000",
+		"PUSH1_ADD_Pattern":   "6001600101600201600301600401600501600601600701600801600901600a01600b01600c01600d01600e01600f016000",
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, _ := hex.DecodeString(hexCode)
+			
+			// Create a fixed code hash to enable caching
+			codeHash := &tosca.Hash{}
+			copy(codeHash[:], []byte("test_contract_hash_"+name)[:32])
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      50000,
+					Code:     code,
+					CodeHash: codeHash, // Provide hash to enable caching
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Benchmark with pre-converted code to measure pure execution performance
+func BenchmarkPreConvertedExecution(b *testing.B) {
+	// Create converter with super-instructions
+	converter, err := lfvm.NewConverter(lfvm.ConversionConfig{
+		WithSuperInstructions: true,
+		CacheSize:            1024 * 1024, // 1MB cache
+	})
+	if err != nil {
+		b.Fatalf("Failed to create converter: %v", err)
+	}
+
+	// Register experimental configurations
+	err = lfvm.RegisterExperimentalInterpreterConfigurations()
+	if err != nil {
+		b.Fatalf("Failed to register experimental configurations: %v", err)
+	}
+
+	// Create optimized interpreter
+	interpreter, err := tosca.NewInterpreter("lfvm-si", nil)
+	if err != nil {
+		b.Fatalf("Failed to create optimized interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		"SimpleArithmetic":     simpleArithmeticCode,
+		"ArithmeticIntensive":  "60036002016004600260020160056003600401600660046002016007600560030160086006600401505050505050506000",
+		"BitwiseOperations":    "600f601016601117601218601319601a1a601b1b6000",
+		"ComparisonOps":        "60056006106007600810600960081260056003136000",
+		"MemoryIntensive":      "60206000526040600052606060005260806000526000516020516040516060516000",
+		"SWAP1_POP_Pattern":   "6001600280915060036004809150600560068091506000",
+		"PUSH1_ADD_Pattern":   "6001600101600201600301600401600501600601600701600801600901600a01600b01600c01600d01600e01600f016000",
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			rawCode, _ := hex.DecodeString(hexCode)
+			
+			// Create a code hash for caching
+			hashBytes := []byte("preconv_" + name)
+			codeHash := &tosca.Hash{}
+			// Pad to 32 bytes if needed
+			if len(hashBytes) < 32 {
+				paddedBytes := make([]byte, 32)
+				copy(paddedBytes, hashBytes)
+				copy(codeHash[:], paddedBytes)
+			} else {
+				copy(codeHash[:], hashBytes[:32])
+			}
+			
+			// Pre-convert the code once (this will be cached)
+			_, err := converter.Convert(rawCode, codeHash)
+			if err != nil {
+				b.Fatalf("Failed to convert code: %v", err)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      50000,
+					Code:     rawCode, // Use raw code, converter will cache the LFVM conversion
+					CodeHash: codeHash,
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+// Benchmark cache warming - simulate real contract deployment and usage
+func BenchmarkCacheWarming(b *testing.B) {
+	interpreter, err := lfvm.NewInterpreter(lfvm.Config{})
+	if err != nil {
+		b.Fatalf("Failed to create LFVM interpreter: %v", err)
+	}
+
+	testCases := map[string]string{
+		"SimpleArithmetic":     simpleArithmeticCode,
+		"BEP20Token":          bep20ContractBytecode[:1000], // First 1000 chars of BEP20 contract
+		"ComplexContract":     "608060405234801561001057600080fd5b506004361061012c5760003560e01c8063893d20e8", // Complex initialization
+	}
+
+	for name, hexCode := range testCases {
+		b.Run(name, func(b *testing.B) {
+			code, _ := hex.DecodeString(hexCode)
+			
+			// Create a fixed code hash to enable caching
+			hashBytes := []byte("cache_warm_" + name)
+			codeHash := &tosca.Hash{}
+			// Pad to 32 bytes if needed
+			if len(hashBytes) < 32 {
+				paddedBytes := make([]byte, 32)
+				copy(paddedBytes, hashBytes)
+				copy(codeHash[:], paddedBytes)
+			} else {
+				copy(codeHash[:], hashBytes[:32])
+			}
+
+			// First call - cache miss (conversion happens)
+			params := tosca.Parameters{
+				Gas:      100000,
+				Code:     code,
+				CodeHash: codeHash,
+			}
+			_, _ = interpreter.Run(params)
+
+			// Now benchmark subsequent calls - cache hits
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params := tosca.Parameters{
+					Gas:      100000,
+					Code:     code,
+					CodeHash: codeHash, // Same hash - should hit cache
+				}
+				_, _ = interpreter.Run(params)
+			}
+		})
+	}
+}
+
+func buildMemoryBoundaryCode() string {
+	// Test memory operations at various boundaries
+	return "60ff60ff52" + // PUSH1 0xff, PUSH1 0xff, MSTORE (store at 0xff)
+		"61ffff61ffff52" + // PUSH2 0xffff, PUSH2 0xffff, MSTORE (store at 0xffff)
+		"60206000526040602052" + // Store at 0x00, 0x20
+		"60ff516101ff516102ff516000" // Load from various positions
+}
+
+func buildJumpTableStress() string {
+	// Create code that uses many different opcodes to stress jump table
+	return "6001" + "6002" + "01" + "6003" + "02" + "6004" + "04" + "6005" + "06" +
+		"6006" + "10" + "6007" + "11" + "6008" + "12" + "6009" + "14" + "600a" + "15" +
+		"600b" + "16" + "600c" + "17" + "600d" + "18" + "600e" + "19" + "600f" + "1a" +
+		"80" + "81" + "82" + "83" + "90" + "91" + "92" + "93" + "a0" + "a1" + "a2" + "a3" +
+		"50505050505050505050505050505050505050506000"
+}
+
+func buildSuperInstructionTest() string {
+	// Test patterns that might be optimized as super-instructions in LFVM
+	return "80" + "50" + // DUP1, POP (common pattern)
+		"91" + "50" + // SWAP2, POP
+		"6001" + "01" + // PUSH1 1, ADD
+		"6002" + "1b" + // PUSH1 2, SHL
+		"80" + "80" + // DUP1, DUP1 (duplication pattern)
+		"82" + "91" + "50" + "50" + // SWAP3, SWAP2, POP, POP (complex swap pattern)
+		"6000"
 }
